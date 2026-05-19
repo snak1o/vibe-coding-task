@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+<meta charset="UTF-8">
+<title>Ajanvarausjärjestelmä</title>
+<style>
+    button:focus,
+    input:focus,
+    select:focus {
+    outline: 3px solid black;
+    }
+    body {
+        font-family: Arial;
+        background-color: pink;
+        max-width: 800px;
+        margin: 20px auto;
+    }
+
+    .box {
+        border: 2px solid black;
+        padding: 30px;
+        margin-bottom: 15px;
+        background: white; 
+    }
+    input {
+        width: 130px;
+        padding: 15px;
+        margin: 5px 0;
+    }
+    .input2 {
+        max-width: 100%;
+        min-width: 250px;
+        padding: 15px;
+        margin: 5px 0;
+    }
+
+    button, select {
+        max-width: 100%;
+        padding: 15px;
+        margin: 5px 0; }
+
+    .hidden {
+        display: none; 
+    }
+
+</style>
+</head>
+<body>
+
+  <header>
+    <h1>Ajanvarausjärjestelmä</h1>
+  </header>
+<main>
+
+<!-- LOGIN -->
+<div class="box" id="loginBox">
+  <h2>Kirjaudu</h2>
+  <label for="email">Sähköposti: </label>
+  <input id="email" placeholder="Sähköposti">
+  <label for="password">Salasana:</label>
+  <input id="password" type="password" placeholder="Salasana">
+  <button onclick="login()">Kirjaudu</button>
+
+  <h3>tai rekisteröidy</h3>
+  <label for="regName">Nimi: </label>
+  <input id="regName" placeholder="Etunimi Sukunimi">
+  <label for="regEmail">Sähköposti: </label>
+  <input id="regEmail" placeholder="Sähköposti">
+  <label for="regPassword">Salasana:</label>
+  <input id="regPassword" type="password" placeholder="Salasana">
+  <button onclick="register()">Rekisteröidy</button>
+
+  <p id="msg"></p>
+</div>
+
+<!-- ADMIN -->
+<div class="box hidden" id="adminBox">
+  <h2>Admin - Luo aika</h2>
+  <label for="start">Alku: </label>
+  <input class="input2" id="start" type="datetime-local">
+  <label for="end">Loppu: </label>
+  <input class="input2" id="end" type="datetime-local">
+  <button onclick="createSlot()">Luo aika</button>
+  <!-- <button onclick="createDemoSlots()">Luo demoslottteja</button> -->
+  <h2>Kaikki varaukset ja varausten hallinta</h2>
+  <button onclick="loadAllAppointments()"> Näytä varaukset </button>
+  <ul id="allAppointments" aria-live="polite"></ul>
+
+</div>
+
+
+<!-- SLOTS -->
+<div class="box hidden" id="slotsBox">
+  <h2>Vapaat ajat</h2>
+  <label for="slots">Valitse vapaa aika: </label>
+  <select id="slots"></select>
+  <button onclick="book()"
+  aria-label="Varaa valittu aika"> Varaa aika </button>
+  <button id="deleteSlotBtn" class="hidden" onclick="deleteSelectedSlot()" aria-label="Poista valittu aika">
+    Poista aika
+  </button>
+</div>
+
+<!-- MY BOOKINGS -->
+<div class="box hidden" id="bookingsBox">
+  <h2>Omat varaukset</h2>
+  <button onclick="loadMyAppointments()">Päivitä</button>
+  <ul id="myBookings" aria-live="polite"></ul>
+</div>
+
+<!-- LOGOUT -->
+<div class="box hidden" id="logoutBox">
+  <button
+    onclick="logout()"
+    aria-label="Kirjaudu ulos järjestelmästä">
+    Kirjaudu ulos
+  </button>
+</div>
+
+<script>
+const API = "/api";
+
+let token = null;
+let user = null;
+
+// ---------------- LOGIN ----------------
+async function login() {
+  const res = await fetch(`${API}/auth/login`, {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({
+      email: email.value,
+      password: password.value
+    })
+  });
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    msg.textContent = data.message;
+    return;
+  }
+
+  token = data.token;
+  user = data.user;
+
+  msg.textContent = "Kirjautuminen onnistui!";
+
+  // hide login
+  document.getElementById("loginBox")
+    .classList.add("hidden");
+
+  // show user content
+  document.getElementById("slotsBox")
+    .classList.remove("hidden");
+  
+  // show own bookings only for normal users
+  if (user.role !== "admin") {
+
+  document.getElementById("bookingsBox")
+    .classList.remove("hidden");
+    loadMyAppointments();
+  }
+
+  document.getElementById("logoutBox")
+    .classList.remove("hidden");
+
+  //document.getElementById("loginBox").classList.add("hidden");
+
+  if (user.role === "admin") {
+    document.getElementById("adminBox")
+    .classList.remove("hidden");
+      document.getElementById("deleteSlotBtn")
+    .classList.remove("hidden");
+  }
+
+  loadSlots();
+}
+
+// ---------------- REGISTER ----------------
+async function register() {
+  const res = await fetch(`${API}/auth/register`, {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({
+      name: regName.value,
+      email: regEmail.value,
+      password: regPassword.value
+    })
+  });
+
+  const data = await res.json();
+  msg.textContent = data.message;
+
+  // clear registration fields
+  regName.value = "";
+  regEmail.value = "";
+  regPassword.value = "";
+}
+
+// ---------------- FORMAT ----------------
+function format(t) {
+  return new Date(t).toLocaleString("fi-FI");
+}
+
+// ---------------- LOAD SLOTS ----------------
+async function loadSlots() {
+  const res = await fetch(`${API}/slots`);
+  const slots = await res.json();
+
+  const select = document.getElementById("slots");
+  select.innerHTML = "";
+
+  if (slots.length === 0) {
+    const option = document.createElement("option");
+    option.textContent = "Ei vapaita aikoja.";
+    option.disabled = true;
+    select.appendChild(option);
+    return;
+  }
+ 
+  slots
+    .filter(slot => !slot.isBooked)
+    .forEach(slot => {
+
+      const option = document.createElement("option");
+
+      option.value = slot._id;
+
+      option.textContent =
+        `${format(slot.start)} - ${format(slot.end)}`;
+
+      select.appendChild(option);
+    });
+}
+
+// ---------------- BOOK ----------------
+async function book() {
+  const slotId = document.getElementById("slots").value;
+
+  const res = await fetch(`${API}/appointments`, {
+    method: "POST",
+    headers: {
+      "Content-Type":"application/json",
+      "Authorization":`Bearer ${token}`
+    },
+    body: JSON.stringify({ slotId })
+  });
+
+  const data = await res.json();
+  alert(data.message || "Aika varattu");
+
+  loadSlots();
+  loadMyAppointments();
+}
+
+// ---------------- CREATE SLOT (ADMIN) ----------------
+async function createSlot() {
+  const res = await fetch(`${API}/slots`, {
+    method: "POST",
+    headers: {
+      "Content-Type":"application/json",
+      "Authorization":`Bearer ${token}`
+    },
+    body: JSON.stringify({
+      start: new Date(start.value).toISOString(),
+      end: new Date(end.value).toISOString()
+    })
+  });
+
+  const data = await res.json();
+  alert(data.message || "Vapaa aika luotu");
+
+  loadSlots();
+}
+
+// ---------------- MY APPOINTMENTS ----------------
+async function loadMyAppointments() {
+  try {
+    const res = await fetch(`${API}/appointments/my`, {
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      }
+    });
+
+    const data = await res.json();
+
+    console.log("RAW RESPONSE:", data);
+
+    const list = document.getElementById("myBookings");
+    list.innerHTML = "";
+
+    if (!Array.isArray(data)) {
+      list.innerHTML = "<li>Ei varauksia tai virhe</li>";
+      return;
+    }
+
+  data.forEach(a => {
+    if (!a.slot) return;
+    const li = document.createElement("li");
+    li.innerHTML = `
+    ${format(a.slot.start)} - ${format(a.slot.end)}
+    <button onclick="deleteAppointment('${a._id}')" aria-label="Peruuta ajanvaraus"> Peruuta
+  </button>
+    `;
+  list.appendChild(li);
+});
+
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+// ---------------- DELETE AN APPOINTMENT ----------------
+async function deleteAppointment(id) {
+
+  const confirmDelete =
+    confirm("Peruutetaanko varaus?");
+
+  if (!confirmDelete) return;
+
+  const res = await fetch(`${API}/appointments/${id}`, {
+    method: "DELETE",
+    headers: {
+      "Authorization": `Bearer ${token}`
+    }
+  });
+
+  const data = await res.json();
+
+  alert(data.message);
+
+  loadMyAppointments();
+  loadSlots();
+
+  if (user.role === "admin") {
+  loadAllAppointments();
+}
+}
+
+// ---------------- LOGOUT ----------------
+function logout() {
+  token = null;
+  user = null;
+  location.reload();
+}
+
+// ---------------- CREATE DEMO SLOTS ----------------
+async function createDemoSlots() {
+
+  const now = new Date();
+
+  for (let i = 1; i <= 5; i++) {
+
+    const start = new Date(now);
+    start.setDate(now.getDate() + i);
+    start.setHours(10, 0, 0);
+
+    const end = new Date(start);
+    end.setHours(11, 0, 0);
+
+    await fetch(`${API}/slots`, {
+      method: "POST",
+      headers: {
+        "Content-Type":"application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        start: start.toISOString(),
+        end: end.toISOString()
+      })
+    });
+  }
+
+  alert("Demoslotit luotu");
+
+  loadSlots();
+}
+
+// ---------------- DELETE SELECTED SLOT ----------------
+async function deleteSelectedSlot() {
+
+  const slotId =
+    document.getElementById("slots").value;
+
+  const confirmDelete =
+    confirm("Poistetaanko aika?");
+
+  if (!confirmDelete) return;
+
+  const res = await fetch(`${API}/slots/${slotId}`, {
+    method: "DELETE",
+    headers: {
+      "Authorization": `Bearer ${token}`
+    }
+  });
+
+  const data = await res.json();
+
+  alert(data.message);
+
+  loadSlots();
+}
+
+// ---------------- ADMIN ALL APPOINTMENTS ----------------
+async function loadAllAppointments() {
+
+  const res = await fetch(`${API}/appointments/all`, {
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type":"application/json"
+    }
+  });
+
+  const data = await res.json();
+
+  const list = document.getElementById("allAppointments");
+
+  list.innerHTML = "";
+
+  data.forEach(appointment => {
+
+    const li = document.createElement("li");
+
+    li.innerHTML = `
+      ${appointment.user.name} |
+      ${format(appointment.slot.start)} -
+      ${format(appointment.slot.end)}
+
+    <button onclick="deleteAppointment('${appointment._id}')" aria-label="Peruuta käyttäjän ajanvaraus">Peruuta
+    </button>
+    `;
+
+    list.appendChild(li);
+  });
+}
+
+// INIT
+loadSlots();
+</script>
+
+</main>
+</body>
+</html>
